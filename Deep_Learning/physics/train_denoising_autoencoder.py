@@ -1,9 +1,6 @@
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
-#import tensorflow as tf
-#from keras.layers import Conv2D,AveragePooling2D,MaxPooling2D,BatchNormalization,Activation,Flatten,Dense
-#from keras.activations import relu
 import keras
 from keras.layers import Activation, Dense, Input
 from keras.layers import Conv2D, Flatten
