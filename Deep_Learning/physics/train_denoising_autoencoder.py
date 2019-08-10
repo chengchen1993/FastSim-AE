@@ -1,6 +1,9 @@
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
+#import tensorflow as tf
+#from keras.layers import Conv2D,AveragePooling2D,MaxPooling2D,BatchNormalization,Activation,Flatten,Dense
+#from keras.activations import relu
 import keras
 from keras.layers import Activation, Dense, Input
 from keras.layers import Conv2D, Flatten
@@ -27,6 +30,8 @@ from ROOT import gROOT, TPaveLabel, TPie, gStyle, gSystem, TGaxis, TStyle, TLate
 parser = OptionParser()
 parser.add_option('--maxevents',action="store",type="int",dest="maxevents",default=1000000000)
 parser.add_option('--epochs',action="store",type="int",dest="epochs",default=5)
+parser.add_option('--branch',action="store",type="int",dest="branch",default=1)
+#branch:1-23,the branch to be drawn
 (options, args) = parser.parse_args()
 
 def UnderOverFlow1D(h):
@@ -52,31 +57,57 @@ def train_and_apply():
     tree = uproot.open("out_all.root")["outA/Tevts"]
     branch_mc=["MC_B_P","MC_B_eta","MC_B_phi","MC_B_pt","MC_D0_P","MC_D0_eta","MC_D0_phi","MC_D0_pt","MC_Dst_P","MC_Dst_eta","MC_Dst_phi","MC_Dst_pt","MC_Est_mu","MC_M2_miss","MC_mu_P","MC_mu_eta","MC_mu_phi","MC_mu_pt","MC_pis_P","MC_pis_eta","MC_pis_phi","MC_pis_pt","MC_q2"]
     branch_rec=["B_P","B_eta","B_phi","B_pt","D0_P","D0_eta","D0_phi","D0_pt","Dst_P","Dst_eta","Dst_phi","Dst_pt","Est_mu","M2_miss","mu_P","mu_eta","mu_phi","mu_pt","pis_P","pis_eta","pis_phi","pis_pt","q2"]
+    nvariable=len(branch_mc)
     x_train = tree.array(branch_mc[0], entrystop=options.maxevents)
-    for i in range(1,len(branch_mc)):
+    for i in range(1,nvariable):
           x_train = np.vstack((x_train,tree.array(branch_mc[i], entrystop=options.maxevents)))
     x_test = tree.array(branch_rec[0], entrystop=options.maxevents)
-    for i in range(1,len(branch_rec)):
+    for i in range(1,nvariable):
           x_test = np.vstack((x_test,tree.array(branch_rec[i], entrystop=options.maxevents)))
     x_train=x_train.T
     x_test=x_test.T
     x_test=array2D_float(x_test)
     #Different type of reconstruction variables
-    
-    #Scaled to 0-1 
-    scale=120.
-    x_train = abs(x_train)/scale
-    x_test = abs(x_test)/scale
+
+    #BN normalization   
+    gamma=0
+    beta=0.2
+  
+    ar=np.array(x_train)
+    a = K.constant(ar[:,0])
+    mean = K.mean(a)
+    var = K.var(a)
+    x_train = K.eval(K.batch_normalization(a, mean, var, gamma, beta))
+    for i in range(1,nvariable):
+        a = K.constant(ar[:,i])
+        mean = K.mean(a)
+        var = K.var(a)
+        a = K.eval(K.batch_normalization(a, mean, var, gamma, beta))
+        x_train = np.vstack((x_train, a))
+    x_train=x_train.T
+
+    ar=np.array(x_test)
+    a = K.constant(ar[:,0])
+    mean = K.mean(a)
+    var = K.var(a)
+    x_test = K.eval(K.batch_normalization(a, mean, var, gamma, beta))
+    for i in range(1,nvariable):
+        a = K.constant(ar[:,i])
+        mean = K.mean(a)
+        var = K.var(a)
+        a = K.eval(K.batch_normalization(a, mean, var, gamma, beta))
+        x_test = np.vstack((x_test, a))
+    x_test=x_test.T
 
     #Add noise, remain to be improved
-    noise = np.random.normal(loc=0.0002, scale=0.0001, size=x_train.shape)
+    noise = np.random.normal(loc=0.0, scale=0.01, size=x_train.shape)
     x_train_noisy = x_train + noise
-    noise = np.random.normal(loc=0.0002, scale=0.0001, size=x_test.shape)
+    noise = np.random.normal(loc=0.0, scale=0.01, size=x_test.shape)
     x_test_noisy = x_test + noise
-    x_train = np.clip(x_train, 0., 1.)
-    x_test = np.clip(x_test, 0., 1.)
-    x_train_noisy = np.clip(x_train_noisy, 0., 1.)
-    x_test_noisy = np.clip(x_test_noisy, 0., 1.)
+    x_train = np.clip(x_train, -1., 1.)
+    x_test = np.clip(x_test, -1., 1.)
+    x_train_noisy = np.clip(x_train_noisy, -1., 1.)
+    x_test_noisy = np.clip(x_test_noisy, -1., 1.)
 
     # Network parameters
     input_shape = (x_train.shape[1],)
@@ -102,7 +133,7 @@ def train_and_apply():
     latent_inputs = Input(shape=(latent_dim,), name='decoder_input')
     x = Dense( shape[1] )(latent_inputs)
     x = Reshape((shape[1],))(x)     
-    outputs = Activation('sigmoid', name='decoder_output')(x)
+    outputs = Activation('tanh', name='decoder_output')(x)
     
     # Instantiate Decoder Model
     decoder = Model(latent_inputs, outputs, name='decoder')
@@ -138,21 +169,21 @@ def train_and_apply():
     fPads1.Draw()
     fPads2.Draw()
     fPads1.cd()
-    nbin=40
-    min=0.
-    max=scale
+    nbin=50
+    min=-1.
+    max=1.
     variable="P^{B}"
     lbin=(max-min)/nbin
-    lbin=str(int((max-min)/nbin))
-    xtitle=variable+"/GeV"
+    lbin=str(float((max-min)/nbin))
+    xtitle=branch_rec[options.branch-1]
     ytitle="Events/"+lbin+"GeV"
     h_rec=TH1D("h_rec",""+";%s;%s"%(xtitle,ytitle),nbin,min,max)
     h_rec.Sumw2()
     h_pre=TH1D("h_pre",""+";%s;%s"%(xtitle,ytitle),nbin,min,max)  
     h_pre.Sumw2()
     for i in range(x_test_noisy.shape[0]):
-              h_rec.Fill(x_test_noisy[i][0]*scale)
-              h_pre.Fill(x_decoded[i][0]*scale)
+              h_rec.Fill(x_test_noisy[i][options.branch-1])
+              h_pre.Fill(x_decoded[i][options.branch-1])
     h_rec=UnderOverFlow1D(h_rec)
     h_pre=UnderOverFlow1D(h_pre)
     maxY = TMath.Max( h_rec.GetMaximum(), h_pre.GetMaximum() ) 
@@ -187,7 +218,7 @@ def train_and_apply():
     theLeg.SetY1(theLeg.GetY1NDC())
     fPads1.cd()
     theLeg.Draw()
-    title = TLatex(0.9,0.93,"AE prediction compare with reconstruction, epochs="+str(options.epochs))
+    title = TLatex(0.91,0.93,"AE prediction compare with reconstruction, epochs="+str(options.epochs))
     title.SetNDC()
     title.SetTextSize(0.05)  
     title.SetTextFont(42)
@@ -237,7 +268,7 @@ def train_and_apply():
                                    h_Ratio.SetBinError(i, 0)
                     h_Ratio.Draw("e0"); axis1.Draw();
 
-    c.SaveAs("Comparision.png")
+    c.SaveAs(branch_rec[options.branch-1]+"_comparision.png")
 
 if __name__ == '__main__':
     train_and_apply()
